@@ -9,12 +9,18 @@ sys.path.insert(0, str(ROOT))
 
 
 @pytest.fixture
-def emu():
-    """A freshly booted emulator; skipped when the bindings or the ROM are missing."""
+def rom():
+    """Path of the ROM; tests needing it are skipped when the bindings or the ROM are missing."""
     pytest.importorskip("mgba")
-    rom = Path(os.environ.get("DPP_ROM", ROOT / "pokemon-firered.gba"))
-    if not rom.exists():
-        pytest.skip(f"no ROM at {rom} (set DPP_ROM)")
+    path = Path(os.environ.get("DPP_ROM", ROOT / "pokemon-firered.gba"))
+    if not path.exists():
+        pytest.skip(f"no ROM at {path} (set DPP_ROM)")
+    return path
+
+
+@pytest.fixture
+def emu(rom):
+    """A freshly booted emulator."""
     from dpp.emulator import Emulator
 
     return Emulator(rom)

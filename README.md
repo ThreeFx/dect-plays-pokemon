@@ -14,7 +14,7 @@ uv sync                    # Python dependencies into .venv
 ./scripts/build_mgba.sh    # mGBA 0.10.5 + its Python bindings into vendor/
 ```
 
-Put the ROM (US FireRed, game code `BPRE`) at `pokemon-firered.gba`. ROMs,
+Put the ROM (US FireRed 1.0 or 1.1, game code `BPRE`) at `pokemon-firered.gba`. ROMs,
 saves and snapshots are git-ignored.
 
 ## Run
@@ -23,6 +23,7 @@ saves and snapshots are git-ignored.
 uv run python -m dpp                  # 1280x720 window
 uv run python -m dpp --fullscreen     # beamer
 uv run python -m dpp --resume         # continue from the latest snapshot
+uv run python -m dpp --state FILE     # start from a specific snapshot or state file
 uv run pytest
 ```
 
@@ -36,15 +37,30 @@ uv run pytest
 A snapshot is written every 60 s (`--snapshot-interval`) to `data/snapshots/`,
 and once more on quit or `SIGTERM`.
 
+## Skipping the intro
+
+```sh
+uv run python -m dpp.start_state --name RED --rival GREEN   # writes data/start.state.z
+uv run python -m dpp --state data/start.state.z
+```
+
+`dpp.start_state` plays a new game with scripted inputs up to Oak's lab, where
+the three starters wait on the table, and saves that state. Names are 1 to 7
+letters A–Z. The same names always give the same state.
+
+Loading any state also replaces the cartridge save (`data/firered.sav`) with
+the one stored in the state.
+
 ## Code
 
 | File | What it does |
 |---|---|
 | `dpp/emulator.py` | One GBA: step a frame with a key mask, read memory, save and load state |
 | `dpp/input.py` | Buttons, the phone-key bindings, and the press queue the phone part will feed |
-| `dpp/firered.py` | Reads badges and party out of the game's RAM |
+| `dpp/firered.py` | Reads badges and party out of the game's RAM, and the badge icons out of the ROM |
 | `dpp/gui.py` | The window: game screen, phone number, key bindings, party, badges |
 | `dpp/snapshots.py` | Snapshot files |
+| `dpp/start_state.py` | Generates the state the event starts from |
 | `patches/` | Changes applied to the mGBA source before building |
 
 Sending input from Python:

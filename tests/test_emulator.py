@@ -2,7 +2,7 @@ import hashlib
 import random
 
 from dpp.emulator import Emulator
-from dpp.firered import GameStats, decode_text, read_stats
+from dpp.firered import BADGE_ICON_SIZE, GameStats, decode_text, read_badge_icons, read_stats
 from dpp.input import Button
 
 
@@ -44,6 +44,27 @@ def test_stats_are_empty_before_a_game_is_running(emu):
     assert read_stats(emu) == GameStats()
 
 
+def test_badge_icons_come_out_of_the_rom(emu):
+    icons = read_badge_icons(emu)
+    assert len(icons) == 8
+    assert len(set(icons)) == 8
+    for icon in icons:
+        assert len(icon) == BADGE_ICON_SIZE * BADGE_ICON_SIZE * 4
+        alpha = icon[3::4]
+        assert alpha[0] == 0, "corner should be transparent"
+        assert 60 < sum(a == 255 for a in alpha) < 256, "icon should be a shape, not a filled or empty square"
+
+
 def test_decode_text():
     assert decode_text(bytes([0xBC, 0xCF, 0xC6, 0xBC, 0xBB, 0xFF, 0x00, 0x00])) == "BULBA"
     assert decode_text(bytes([0xCC, 0xE9, 0xD8, 0xED, 0x00, 0xA3, 0xFF])) == "Rudy 2"
+
+
+def test_start_state_is_in_oaks_lab_before_the_starter_choice(emu, rom):
+    from dpp.firered import read_player_name, read_position
+    from dpp.start_state import create
+
+    emu.load_state(create(rom, "DECT", "GSM"))
+    assert read_player_name(emu) == "DECT"
+    assert read_position(emu) == (4, 3, 6, 4)
+    assert read_stats(emu).party == ()

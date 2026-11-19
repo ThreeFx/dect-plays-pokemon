@@ -9,7 +9,7 @@ from pathlib import Path
 import pygame
 
 from .emulator import Emulator
-from .firered import DEMO_STATS, read_stats
+from .firered import DEMO_STATS, read_badge_icons, read_stats
 from .gui import Frame
 from .input import InputQueue
 from .snapshots import SnapshotStore
@@ -27,7 +27,9 @@ def main() -> None:
     parser.add_argument("--size", default="1280x720", help="window size, WIDTHxHEIGHT")
     parser.add_argument("--fullscreen", action="store_true")
     parser.add_argument("--snapshot-interval", type=float, default=60, help="seconds between automatic snapshots")
-    parser.add_argument("--resume", action="store_true", help="start from the latest snapshot")
+    start = parser.add_mutually_exclusive_group()
+    start.add_argument("--resume", action="store_true", help="start from the latest snapshot")
+    start.add_argument("--state", type=Path, help="start from this snapshot or state file (see dpp.start_state)")
     parser.add_argument("--demo-stats", action="store_true", help="show made-up badges and party (layout preview)")
     parser.add_argument("--screenshot", type=Path, help="run --frames frames unthrottled, save the window as PNG, exit")
     parser.add_argument("--frames", type=int, default=2400)
@@ -39,6 +41,9 @@ def main() -> None:
     if args.resume and (latest := snapshots.latest()):
         snapshots.load(emu, latest)
         print(f"resumed from {latest}")
+    elif args.state:
+        snapshots.load(emu, args.state)
+        print(f"started from {args.state}")
 
     pygame.init()
     if args.fullscreen:
@@ -47,7 +52,7 @@ def main() -> None:
     else:
         window = pygame.display.set_mode(tuple(int(n) for n in args.size.split("x")))
     pygame.display.set_caption("DECT plays Pokémon")
-    frame = Frame(window.get_size(), args.phone_number)
+    frame = Frame(window.get_size(), args.phone_number, read_badge_icons(emu))
     inputs = InputQueue()
 
     if args.screenshot:

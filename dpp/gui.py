@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import colorsys
 import math
 from pathlib import Path
 
 import pygame
 
 from .emulator import Emulator
-from .firered import GameStats, PartyMon
+from .firered import BADGE_ICON_SIZE, GameStats, PartyMon
 from .input import PHONE_KEYS, Button
 
 _FONT = Path(__file__).parent / "assets" / "PressStart2P-Regular.ttf"
@@ -29,6 +30,19 @@ HP_MID = (240, 200, 56)
 HP_LOW = (232, 64, 56)
 BADGE_MISSING = (52, 58, 86)
 
+# The game draws all badges in silver; these are their usual colours, in badge
+# order. None is the Rainbow Badge, which gets a colour wheel instead.
+_BADGE_TINTS = [
+    (200, 204, 216),
+    (88, 168, 255),
+    (255, 190, 56),
+    None,
+    (255, 112, 176),
+    (248, 204, 72),
+    (255, 88, 60),
+    (96, 208, 104),
+]
+
 _ARROWS = {Button.UP: 0, Button.RIGHT: 90, Button.DOWN: 180, Button.LEFT: 270}
 _ARROW_SHAPE = [(0, -1), (1, 0.05), (0.38, 0.05), (0.38, 1), (-0.38, 1), (-0.38, 0.05), (-1, 0.05)]
 
@@ -39,54 +53,24 @@ def _polygon(shape, center, radius, degrees=0.0):
     return [(center[0] + radius * (x * cos - y * sin), center[1] + radius * (x * sin + y * cos)) for x, y in shape]
 
 
-def _star(points: int, inner: float):
-    return [
-        (math.sin(math.pi * i / points) * (1 if i % 2 == 0 else inner), -math.cos(math.pi * i / points) * (1 if i % 2 == 0 else inner))
-        for i in range(points * 2)
-    ]
-
-
-def _draw_badge(surface: pygame.Surface, index: int, c: tuple[float, float], r: float) -> None:
-    """Draw one of the eight Kanto badges as a simple emblem centred on c with radius r."""
-    x, y = c
-    if index == 0:  # Boulder: grey octagon
-        pygame.draw.polygon(surface, (150, 156, 168), _polygon(_star(4, 0.92), c, r, 22.5))
-        pygame.draw.polygon(surface, (196, 202, 212), _polygon(_star(4, 0.92), c, r * 0.55, 22.5))
-    elif index == 1:  # Cascade: blue drop
-        pygame.draw.polygon(surface, (64, 148, 240), [(x, y - r), (x + r * 0.62, y + r * 0.1), (x - r * 0.62, y + r * 0.1)])
-        pygame.draw.circle(surface, (64, 148, 240), (x, y + r * 0.3), r * 0.7)
-        pygame.draw.circle(surface, (168, 216, 255), (x - r * 0.2, y + r * 0.25), r * 0.22)
-    elif index == 2:  # Thunder: sun burst
-        pygame.draw.polygon(surface, (248, 200, 48), _polygon(_star(8, 0.6), c, r))
-        pygame.draw.circle(surface, (240, 136, 40), c, r * 0.38)
-    elif index == 3:  # Rainbow: flower with coloured petals
-        petals = [(232, 64, 56), (240, 136, 40), (248, 200, 48), (88, 208, 96), (64, 148, 240), (150, 100, 230)]
-        for i, colour in enumerate(petals):
-            angle = 2 * math.pi * i / len(petals)
-            pygame.draw.circle(surface, colour, (x + math.sin(angle) * r * 0.6, y - math.cos(angle) * r * 0.6), r * 0.4)
-        pygame.draw.circle(surface, (248, 240, 200), c, r * 0.32)
-    elif index == 4:  # Soul: heart
-        pygame.draw.circle(surface, (248, 96, 160), (x - r * 0.45, y - r * 0.3), r * 0.52)
-        pygame.draw.circle(surface, (248, 96, 160), (x + r * 0.45, y - r * 0.3), r * 0.52)
-        pygame.draw.polygon(surface, (248, 96, 160), [(x - r * 0.94, y - r * 0.08), (x + r * 0.94, y - r * 0.08), (x, y + r)])
-    elif index == 5:  # Marsh: golden rings
-        pygame.draw.circle(surface, (224, 176, 48), c, r)
-        pygame.draw.circle(surface, (150, 110, 24), c, r * 0.62)
-        pygame.draw.circle(surface, (248, 216, 112), c, r * 0.36)
-    elif index == 6:  # Volcano: flame
-        pygame.draw.polygon(surface, (232, 64, 56), _polygon([(0, -1), (0.8, 0.2), (0, 1), (-0.8, 0.2)], c, r))
-        pygame.draw.polygon(surface, (248, 168, 48), _polygon([(0, -0.3), (0.42, 0.3), (0, 0.8), (-0.42, 0.3)], c, r))
-    else:  # Earth: green leaf
-        side = [(0.62 * math.sin(math.pi * i / 12) ** 1.5, -math.cos(math.pi * i / 12)) for i in range(13)]
-        leaf = side + [(-px, py) for px, py in reversed(side)]
-        pygame.draw.polygon(surface, (72, 176, 88), _polygon(leaf, c, r))
-        pygame.draw.line(surface, (32, 104, 56), (x, y - r * 0.6), (x, y + r), max(1, round(r * 0.12)))
+def _tint(icon: bytes, badge: int) -> bytes:
+    """Colour a silver badge icon (RGBA pixels). Multiplying keeps its shading and black outline."""
+    out = bytearray(icon)
+    for pixel in range(len(out) // 4):
+        tint = _BADGE_TINTS[badge]
+        if tint is None:
+            x, y = pixel % BADGE_ICON_SIZE - 7.5, pixel // BADGE_ICON_SIZE - 7.5
+            tint = [round(c * 255) for c in colorsys.hsv_to_rgb(math.atan2(y, x) / math.tau % 1, 0.6, 1)]
+        for channel in range(3):
+            out[pixel * 4 + channel] = out[pixel * 4 + channel] * tint[channel] // 255
+    return bytes(out)
 
 
 class Frame:
     """Draws the whole window onto a pygame surface."""
 
-    def __init__(self, window_size: tuple[int, int], phone_number: str):
+    def __init__(self, window_size: tuple[int, int], phone_number: str, badge_icons: list[bytes]):
+        """badge_icons are the eight icons from firered.read_badge_icons()."""
         self.unit = u = max(1, min(window_size[0] // CANVAS[0], window_size[1] // CANVAS[1]))
         self._origin = ((window_size[0] - CANVAS[0] * u) // 2, (window_size[1] - CANVAS[1] * u) // 2)
         self._phone_number = phone_number
@@ -96,6 +80,15 @@ class Frame:
         self._large = pygame.font.Font(_FONT, u * 8)
         self._huge = pygame.font.Font(_FONT, u * 16)
         self._panels = pygame.Surface((CANVAS[0] * u, CANVAS[1] * u))
+
+        # Badges keep whole game pixels: the largest integer scale that fits the strip.
+        size = BADGE_ICON_SIZE * max(1, 14 * u // BADGE_ICON_SIZE)
+        self._badges = []  # (earned, missing) surface per badge
+        for index, icon in enumerate(badge_icons):
+            earned = pygame.image.frombuffer(_tint(icon, index), (BADGE_ICON_SIZE, BADGE_ICON_SIZE), "RGBA")
+            earned = pygame.transform.scale(earned, (size, size))
+            missing = pygame.mask.from_surface(earned).to_surface(setcolor=BADGE_MISSING, unsetcolor=(0, 0, 0, 0))
+            self._badges.append((earned, missing))
         self._drawn: tuple[GameStats, Button] | None = None
 
     def draw(self, window: pygame.Surface, framebuffer, stats: GameStats, held: Button) -> None:
@@ -175,14 +168,8 @@ class Frame:
     def _draw_badges(self, badges: tuple[bool, ...]) -> None:
         self._panel(2, 162, 236, 16)
         self._text(self._small, "BADGES", DIM, midleft=(7, 170.3))
-        u = self.unit
         for index, earned in enumerate(badges):
-            centre, radius = ((46 + index * 21) * u, 170 * u), 5.5 * u
-            if earned:
-                _draw_badge(self._panels, index, centre, radius)
-            else:
-                emblem = pygame.Surface((14 * u, 14 * u), pygame.SRCALPHA)
-                _draw_badge(emblem, index, (7 * u, 7 * u), radius)
-                silhouette = pygame.mask.from_surface(emblem).to_surface(setcolor=BADGE_MISSING, unsetcolor=(0, 0, 0, 0))
-                self._panels.blit(silhouette, (centre[0] - 7 * u, centre[1] - 7 * u))
+            icon = self._badges[index][0 if earned else 1]
+            centre = ((46 + index * 21) * self.unit, 170 * self.unit)
+            self._panels.blit(icon, icon.get_rect(center=centre))
         self._text(self._medium, f"{sum(badges)}/8", TEXT, midright=(233, 170.3))
