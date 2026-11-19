@@ -1,0 +1,1 @@
+"""DECT plays Pokémon."""

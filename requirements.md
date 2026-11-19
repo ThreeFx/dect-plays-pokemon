@@ -28,9 +28,11 @@ daraus generieren.
 * Wie nehmen wir automatisiert Anrufe entgegen und verarbeiten deren Knopfdrücke?
     * A: https://github.com/eventphone/hotline
 * Welchen Emulator verwenden wir?
+    * A: mGBA als Bibliothek, gesteuert über dessen Python-Bindings (siehe README.md)
 * Wie funktioniert das ganze wrt. concurrency?
 * Wie gross ist X?
 * Wie programmieren wir das GUI?
+    * A: pygame (`dpp/gui.py`)
 * Können wir badges an Anrufer vergeben?
 
 ## Design

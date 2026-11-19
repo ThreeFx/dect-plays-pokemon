@@ -1,0 +1,8 @@
+# ROMs and save data never go into git
+*.gba
+*.sav
+/data/
+
+/vendor/
+/.venv/
+__pycache__/

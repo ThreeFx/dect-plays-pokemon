@@ -1,0 +1,25 @@
+[project]
+name = "dect-plays-pokemon"
+version = "0.1.0"
+description = "Collaborative Pokémon FireRed over DECT phones"
+requires-python = ">=3.12"
+dependencies = [
+    "pygame-ce>=2.5",
+    # Runtime dependencies of mGBA's Python bindings (built by scripts/build_mgba.sh).
+    "cffi>=1.6",
+    "cached-property",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    # Needed by the setup.py of mGBA's Python bindings.
+    "setuptools",
+    "pytest-runner",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
