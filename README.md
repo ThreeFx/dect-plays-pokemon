@@ -1,8 +1,9 @@
 # DECT plays Pokémon
 
 Pokémon FireRed on a beamer, played by calling a phone number. See
-[requirements.md](requirements.md) for the plan. This repository currently
-contains the emulator side; the phone side does not exist yet.
+[requirements.md](requirements.md) for the plan. This repository contains the
+client (emulator and window) and the server that keeps its snapshots; the
+phone side does not exist yet.
 
 ## Setup
 
@@ -14,28 +15,26 @@ uv sync                    # Python dependencies into .venv
 ./scripts/build_mgba.sh    # mGBA 0.10.5 + its Python bindings into vendor/
 ```
 
-Put the ROM (US FireRed 1.0 or 1.1, game code `BPRE`) at `pokemon-firered.gba`. ROMs,
-saves and snapshots are git-ignored.
+Put the ROM (US FireRed 1.0 or 1.1, game code `BPRE`) at `pokemon-firered.gba`. ROMs
+and everything under `data/` are git-ignored.
 
 ## Run
 
 ```sh
 uv run python -m dpp                  # 1280x720 window
 uv run python -m dpp --fullscreen     # beamer
-uv run python -m dpp --resume         # continue from the latest snapshot
-uv run python -m dpp --state FILE     # start from a specific snapshot or state file
-uv run pytest
+uv run python -m dpp --state FILE     # start from a state file
+uv run --extra server pytest
 ```
 
 | Key | Action |
 |---|---|
 | `1`–`9` | the phone keys (stand-in until the phone part exists) |
-| `F5` | save a snapshot |
-| `F9` | roll back to the latest snapshot |
-| `Esc` | save a snapshot and quit |
+| `Esc` | quit |
 
-A snapshot is written every 60 s (`--snapshot-interval`) to `data/snapshots/`,
-and once more on quit or `SIGTERM`.
+The client keeps nothing but the game's own cartridge save
+(`data/firered.sav`) on disk. Progress is kept by the [server](#server); a
+state downloaded from its page can be loaded with `--state`.
 
 ## Skipping the intro
 
@@ -51,16 +50,55 @@ letters A–Z. The same names always give the same state.
 Loading any state also replaces the cartridge save (`data/firered.sav`) with
 the one stored in the state.
 
+## Server
+
+The server keeps the game safe off the client machine: it stores snapshots
+and the button presses between them in an SQLite database, and decides what a
+starting client continues from.
+
+```sh
+uv sync --extra server
+DPP_PASSWORD=... uv run python -m dpp.server                  # http://127.0.0.1:8000
+uv run python -m dpp --server http://127.0.0.1:8000 --state data/start.state.z
+```
+
+1. The client registers and shows `WAITING FOR ADMIN` with a 4-digit code.
+2. On the server's web page (any user name, the password from `DPP_PASSWORD`)
+   the client appears with the same code. Choose what it continues from, by
+   default the most recent snapshot, and accept it.
+3. The client loads that state and plays. Every 10 minutes
+   (`--upload-interval`, in minutes) and when it quits, it uploads a snapshot
+   with metadata and the button presses since the previous upload. If the
+   server is unreachable the uploads wait and are retried.
+
+When uploads are in trouble, a small dot appears in the top right corner of
+the phone number panel: yellow while the server cannot be reached (the client
+keeps retrying and catches up), red when the server refused an upload, for
+example because another client was accepted. The reason is printed on the
+client's console. The game itself is not interrupted.
+
+A client has to be accepted every time it starts. Only one client is accepted
+at a time; accepting another one stops the previous one from uploading. With
+an empty database the client starts from `--state` or from power-on.
+
+The page is also how you roll back: restart the client and pick an older
+snapshot when accepting it.
+
+The server listens on localhost unless told otherwise (`--host 0.0.0.0`). The
+password travels as HTTP Basic auth, so across a network put the server behind
+a reverse proxy that does TLS and give the client the `https://` URL.
+
 ## Code
 
 | File | What it does |
 |---|---|
 | `dpp/emulator.py` | One GBA: step a frame with a key mask, read memory, save and load state |
 | `dpp/input.py` | Buttons, the phone-key bindings, and the press queue the phone part will feed |
-| `dpp/firered.py` | Reads badges and party out of the game's RAM, and the badge icons out of the ROM |
+| `dpp/firered.py` | Reads badges and party out of the game's RAM, and badge and Pokémon icons out of the ROM |
 | `dpp/gui.py` | The window: game screen, phone number, key bindings, party, badges |
-| `dpp/snapshots.py` | Snapshot files |
 | `dpp/start_state.py` | Generates the state the event starts from |
+| `dpp/sync.py` | Client side of the server protocol: approval, input log, uploads |
+| `dpp/server/` | The server: client API, admin page, database |
 | `patches/` | Changes applied to the mGBA source before building |
 
 Sending input from Python:

@@ -18,13 +18,34 @@ _FLAG_BADGE_1 = 0x820  # the eight badge flags are consecutive
 _MON_SIZE = 100
 _EWRAM = range(0x02000000, 0x02040000)
 
-# The badge icons live in the ROM as part of the trainer card: an LZ77-compressed
-# sheet of 4bpp tiles and a palette. ROM revision -> (sKantoTrainerCardBadges_Gfx,
-# sKantoTrainerCardBadges_Pal).
+# Graphics are read from the ROM, where addresses differ between revisions:
+# ROM revision -> pokefirered symbol -> address.
 _ROM_REVISION = 0x080000BC
-_BADGE_GRAPHICS = {0: (0x083CD5E8, 0x083CD2E0), 1: (0x083CD658, 0x083CD350)}
-_SHEET_TILES_PER_ROW = 16
+_ROM_SYMBOLS = {
+    0: {
+        "sKantoTrainerCardBadges_Gfx": 0x083CD5E8,
+        "sKantoTrainerCardBadges_Pal": 0x083CD2E0,
+        "gMonIconPalettes": 0x083D3740,
+        "gMonIconTable": 0x083D37A0,
+        "gMonIconPaletteIndices": 0x083D3E80,
+    },
+    1: {
+        "sKantoTrainerCardBadges_Gfx": 0x083CD658,
+        "sKantoTrainerCardBadges_Pal": 0x083CD350,
+        "gMonIconPalettes": 0x083D37B0,
+        "gMonIconTable": 0x083D3810,
+        "gMonIconPaletteIndices": 0x083D3EF0,
+    },
+}
 BADGE_ICON_SIZE = 16
+MON_ICON_SIZE = 32
+_SPECIES_COUNT = 440  # entries in the icon tables
+_SPECIES_EGG = 412
+
+# A party Pokémon keeps its species inside 48 encrypted bytes made of four
+# 12-byte blocks whose order depends on its personality value. This is the
+# position of the block that starts with the species ("growth") for each order.
+_GROWTH_BLOCK = (0, 0, 0, 0, 0, 0, 1, 1, 2, 3, 2, 3, 1, 1, 2, 3, 2, 3, 1, 1, 2, 3, 2, 3)
 
 _CHARSET = {0x00: " ", 0xAB: "!", 0xAC: "?", 0xAD: ".", 0xAE: "-", 0xB8: ",", 0xBA: "/"}
 _CHARSET |= {0xA1 + i: str(i) for i in range(10)}
@@ -35,6 +56,7 @@ _TERMINATOR = 0xFF
 
 @dataclass(frozen=True)
 class PartyMon:
+    species: int  # national-order index as the game stores it; eggs count as their own species
     nickname: str
     level: int
     hp: int
@@ -55,6 +77,16 @@ def decode_text(raw: bytes) -> str:
             break
         text.append(_CHARSET.get(byte, "?"))
     return "".join(text)
+
+
+def _species(mon: bytes) -> int:
+    """The species of a 100-byte party Pokémon."""
+    if mon[19] & 0b100:
+        return _SPECIES_EGG
+    personality = int.from_bytes(mon[0:4], "little")
+    key = personality ^ int.from_bytes(mon[4:8], "little")
+    block = 32 + 12 * _GROWTH_BLOCK[personality % 24]
+    return (int.from_bytes(mon[block : block + 4], "little") ^ key) & 0xFFFF
 
 
 def read_player_name(emu: Emulator) -> str:
@@ -87,6 +119,7 @@ def read_stats(emu: Emulator) -> GameStats:
         mon = emu.read(_PLAYER_PARTY + slot * _MON_SIZE, _MON_SIZE)
         party.append(
             PartyMon(
+                species=_species(mon),
                 nickname=decode_text(mon[8:18]),
                 level=mon[84],
                 hp=int.from_bytes(mon[86:88], "little"),
@@ -123,38 +156,60 @@ def _lz77_decompress(emu: Emulator, address: int) -> bytes:
     return bytes(out[:size])
 
 
-def read_badge_icons(emu: Emulator) -> list[bytes]:
-    """The eight badge icons as the game draws them, each BADGE_ICON_SIZE square RGBA pixels."""
+def _rom_symbols(emu: Emulator) -> dict[str, int]:
     revision = emu.read_u8(_ROM_REVISION)
-    if emu.game_code != "AGB-BPRE" or revision not in _BADGE_GRAPHICS:
+    if emu.game_code != "AGB-BPRE" or revision not in _ROM_SYMBOLS:
         raise ValueError(f"unsupported ROM {emu.game_code} revision {revision}; need US FireRed (BPRE) 1.0 or 1.1")
-    graphics, palette_address = _BADGE_GRAPHICS[revision]
-    tiles = _lz77_decompress(emu, graphics)
+    return _ROM_SYMBOLS[revision]
 
+
+def _read_palette(emu: Emulator, address: int) -> list[bytes]:
+    """A 16-colour palette as RGBA values; colour 0 is transparent."""
     palette = []
     for i in range(16):
-        colour = emu.read_u16(palette_address + 2 * i)  # 15-bit BGR
+        colour = emu.read_u16(address + 2 * i)  # 15-bit BGR
         red, green, blue = (channel * 255 // 31 for channel in (colour & 31, colour >> 5 & 31, colour >> 10 & 31))
-        palette.append(bytes((red, green, blue, 255 if i else 0)))  # colour 0 is transparent
+        palette.append(bytes((red, green, blue, 255 if i else 0)))
+    return palette
 
-    icons = []
-    for badge in range(8):
-        pixels = bytearray()
-        for y in range(BADGE_ICON_SIZE):
-            for x in range(BADGE_ICON_SIZE):
-                tile = (y // 8) * _SHEET_TILES_PER_ROW + badge * 2 + x // 8
-                pair = tiles[tile * 32 + (y % 8) * 4 + (x % 8) // 2]  # two pixels per byte, left one in the low half
-                pixels += palette[pair >> 4 if x % 2 else pair & 0xF]
-        icons.append(bytes(pixels))
-    return icons
+
+def _tiles_to_rgba(tiles: bytes, palette: list[bytes], size: int, first_tile: int, tiles_per_row: int) -> bytes:
+    """Cut a size x size picture out of a sheet of 8x8 tiles with 4 bits per pixel."""
+    pixels = bytearray()
+    for y in range(size):
+        for x in range(size):
+            tile = first_tile + (y // 8) * tiles_per_row + x // 8
+            pair = tiles[tile * 32 + (y % 8) * 4 + (x % 8) // 2]  # two pixels per byte, left one in the low half
+            pixels += palette[pair >> 4 if x % 2 else pair & 0xF]
+    return bytes(pixels)
+
+
+def read_badge_icons(emu: Emulator) -> list[bytes]:
+    """The eight badge icons as the game draws them, each BADGE_ICON_SIZE square RGBA pixels."""
+    symbols = _rom_symbols(emu)
+    tiles = _lz77_decompress(emu, symbols["sKantoTrainerCardBadges_Gfx"])  # a sheet 16 tiles wide, 2 x 2 tiles per badge
+    palette = _read_palette(emu, symbols["sKantoTrainerCardBadges_Pal"])
+    return [_tiles_to_rgba(tiles, palette, BADGE_ICON_SIZE, badge * 2, 16) for badge in range(8)]
+
+
+def read_mon_icon(emu: Emulator, species: int) -> bytes | None:
+    """A species' party-menu icon as MON_ICON_SIZE square RGBA pixels; None for an unknown species."""
+    if not 0 < species < _SPECIES_COUNT:
+        return None
+    symbols = _rom_symbols(emu)
+    # Each icon is two animation frames of 4 x 4 tiles, stored uncompressed; take the first.
+    tiles = emu.read(emu.read_u32(symbols["gMonIconTable"] + 4 * species), 16 * 32)
+    palette_index = emu.read_u8(symbols["gMonIconPaletteIndices"] + species)
+    palette = _read_palette(emu, symbols["gMonIconPalettes"] + 32 * palette_index)
+    return _tiles_to_rgba(tiles, palette, MON_ICON_SIZE, 0, 4)
 
 
 DEMO_STATS = GameStats(
     badges=(True, True, True, False, False, False, False, False),
     party=(
-        PartyMon("CHARMELEON", 27, 71, 78),
-        PartyMon("PIDGEOTTO", 24, 29, 66),
-        PartyMon("PIKACHU", 22, 9, 54),
-        PartyMon("GYARADOS", 21, 0, 70),
+        PartyMon(5, "CHARMELEON", 27, 71, 78),
+        PartyMon(17, "PIDGEOTTO", 24, 29, 66),
+        PartyMon(25, "PIKACHU", 22, 9, 54),
+        PartyMon(130, "GYARADOS", 21, 0, 70),
     ),
 )

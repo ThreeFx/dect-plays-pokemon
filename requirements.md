@@ -31,6 +31,7 @@ daraus generieren.
     * A: mGBA als Bibliothek, gesteuert über dessen Python-Bindings (siehe README.md)
 * Wie funktioniert das ganze wrt. concurrency?
 * Wie gross ist X?
+    * A: 10 Minuten für Uploads zum Server, konfigurierbar (`--upload-interval`)
 * Wie programmieren wir das GUI?
     * A: pygame (`dpp/gui.py`)
 * Können wir badges an Anrufer vergeben?

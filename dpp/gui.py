@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import colorsys
 import math
+from collections.abc import Callable
 from pathlib import Path
 
 import pygame
 
 from .emulator import Emulator
-from .firered import BADGE_ICON_SIZE, GameStats, PartyMon
+from .firered import BADGE_ICON_SIZE, MON_ICON_SIZE, GameStats, PartyMon
 from .input import PHONE_KEYS, Button
 
 _FONT = Path(__file__).parent / "assets" / "PressStart2P-Regular.ttf"
@@ -29,6 +30,8 @@ HP_HIGH = (88, 208, 96)
 HP_MID = (240, 200, 56)
 HP_LOW = (232, 64, 56)
 BADGE_MISSING = (52, 58, 86)
+# The dot shown while uploads to the server are in trouble, by Server.sync_status.
+SYNC_COLOURS = {"retrying": HP_MID, "refused": HP_LOW}
 
 # The game draws all badges in silver; these are their usual colours, in badge
 # order. None is the Rainbow Badge, which gets a colour wheel instead.
@@ -69,8 +72,14 @@ def _tint(icon: bytes, badge: int) -> bytes:
 class Frame:
     """Draws the whole window onto a pygame surface."""
 
-    def __init__(self, window_size: tuple[int, int], phone_number: str, badge_icons: list[bytes]):
-        """badge_icons are the eight icons from firered.read_badge_icons()."""
+    def __init__(
+        self,
+        window_size: tuple[int, int],
+        phone_number: str,
+        badge_icons: list[bytes],
+        mon_icon: Callable[[int], bytes | None],
+    ):
+        """badge_icons are the eight icons from firered.read_badge_icons(); mon_icon(species) is firered.read_mon_icon."""
         self.unit = u = max(1, min(window_size[0] // CANVAS[0], window_size[1] // CANVAS[1]))
         self._origin = ((window_size[0] - CANVAS[0] * u) // 2, (window_size[1] - CANVAS[1] * u) // 2)
         self._phone_number = phone_number
@@ -81,6 +90,9 @@ class Frame:
         self._huge = pygame.font.Font(_FONT, u * 16)
         self._panels = pygame.Surface((CANVAS[0] * u, CANVAS[1] * u))
 
+        self._mon_icon = mon_icon
+        self._mon_icons: dict[int, pygame.Surface | None] = {}  # scaled, by species
+
         # Badges keep whole game pixels: the largest integer scale that fits the strip.
         size = BADGE_ICON_SIZE * max(1, 14 * u // BADGE_ICON_SIZE)
         self._badges = []  # (earned, missing) surface per badge
@@ -89,16 +101,28 @@ class Frame:
             earned = pygame.transform.scale(earned, (size, size))
             missing = pygame.mask.from_surface(earned).to_surface(setcolor=BADGE_MISSING, unsetcolor=(0, 0, 0, 0))
             self._badges.append((earned, missing))
-        self._drawn: tuple[GameStats, Button] | None = None
+        self._drawn: tuple[GameStats, Button, str] | None = None
 
-    def draw(self, window: pygame.Surface, framebuffer, stats: GameStats, held: Button) -> None:
-        """Draw one frame: framebuffer is the emulator's screen, held the buttons currently pressed."""
-        if (stats, held) != self._drawn:
-            self._draw_panels(stats, held)
-            self._drawn = (stats, held)
+    def draw(self, window: pygame.Surface, framebuffer, stats: GameStats, held: Button, sync: str = "ok") -> None:
+        """Draw one frame.
+
+        framebuffer is the emulator's screen, held the buttons currently pressed and
+        sync the Server.sync_status ("ok" when there is no server).
+        """
+        if (stats, held, sync) != self._drawn:
+            self._draw_panels(stats, held, sync)
+            self._drawn = (stats, held, sync)
         window.blit(self._panels, self._origin)
         game = pygame.image.frombuffer(framebuffer, (Emulator.WIDTH, Emulator.HEIGHT), "RGBX")
         window.blit(pygame.transform.scale(game, self._rect(0, 0, 240, 160).size), self._origin)
+
+    def draw_message(self, window: pygame.Surface, headline: str, detail: str = "") -> None:
+        """Fill the window with a status message, for when there is no game to show yet."""
+        self._panels.fill(BACKGROUND)
+        self._text(self._large, headline, TEXT, center=(160, 78))
+        self._text(self._medium, detail, ACCENT, center=(160, 100))
+        self._drawn = None
+        window.blit(self._panels, self._origin)
 
     def _rect(self, x: float, y: float, w: float, h: float) -> pygame.Rect:
         u = self.unit
@@ -113,15 +137,17 @@ class Frame:
     def _panel(self, x: float, y: float, w: float, h: float, colour=PANEL) -> None:
         pygame.draw.rect(self._panels, colour, self._rect(x, y, w, h), border_radius=self.unit * 2)
 
-    def _draw_panels(self, stats: GameStats, held: Button) -> None:
+    def _draw_panels(self, stats: GameStats, held: Button, sync: str) -> None:
         self._panels.fill(BACKGROUND)
-        self._draw_phone_number()
+        self._draw_phone_number(sync)
         self._draw_keypad(held)
         self._draw_party(stats.party)
         self._draw_badges(stats.badges)
 
-    def _draw_phone_number(self) -> None:
+    def _draw_phone_number(self, sync: str) -> None:
         self._panel(242, 2, 76, 32)
+        if sync in SYNC_COLOURS:  # small on purpose: meant for the admins, not the players
+            pygame.draw.circle(self._panels, SYNC_COLOURS[sync], (313 * self.unit, round(7.2 * self.unit)), round(1.3 * self.unit))
         self._text(self._small, "CALL TO PLAY", DIM, midtop=(280, 6))
         self._text(self._huge, self._phone_number, ACCENT, midtop=(280.5, 13))
 
@@ -145,6 +171,16 @@ class Frame:
             elif button is not None:
                 self._text(self._small, button.name, TEXT, midbottom=(x + 11, y + 14.5))
 
+    def _scaled_mon_icon(self, species: int) -> pygame.Surface | None:
+        if species not in self._mon_icons:
+            icon = self._mon_icon(species)
+            if icon is not None:
+                size = MON_ICON_SIZE * max(1, self.unit // 3)  # whole game pixels, about as tall as a party row
+                icon = pygame.image.frombuffer(icon, (MON_ICON_SIZE, MON_ICON_SIZE), "RGBA")
+                icon = pygame.transform.scale(icon, (size, size))
+            self._mon_icons[species] = icon
+        return self._mon_icons[species]
+
     def _draw_party(self, party: tuple[PartyMon, ...]) -> None:
         self._panel(242, 106, 76, 72)
         self._text(self._small, "PARTY", DIM, midtop=(280, 110))
@@ -155,13 +191,20 @@ class Frame:
                 continue
             mon = party[slot]
             fainted = mon.hp == 0
-            self._text(self._small, mon.nickname, DIM if fainted else TEXT, topleft=(245, y))
+            icon = self._scaled_mon_icon(mon.species)
+            if icon is not None:
+                if fainted:
+                    icon = icon.copy()
+                    icon.set_alpha(90)
+                # The icons sit low in their square, so centre them a little above the row's middle.
+                self._panels.blit(icon, icon.get_rect(center=(round(249.5 * self.unit), round((y + 2.5) * self.unit))))
+            self._text(self._small, mon.nickname, DIM if fainted else TEXT, topleft=(256, y))
             self._text(self._small, f"L{mon.level}", DIM, topright=(315, y))
             ratio = mon.hp / mon.max_hp if mon.max_hp else 0
             colour = HP_HIGH if ratio > 0.5 else HP_MID if ratio > 0.2 else HP_LOW
-            pygame.draw.rect(self._panels, KEY_UNBOUND, self._rect(245, y + 4.5, 46, 2.5), border_radius=self.unit)
+            pygame.draw.rect(self._panels, KEY_UNBOUND, self._rect(256, y + 4.5, 36, 2.5), border_radius=self.unit)
             if mon.hp:
-                bar = self._rect(245, y + 4.5, max(2.5, 46 * ratio), 2.5)
+                bar = self._rect(256, y + 4.5, max(2.5, 36 * ratio), 2.5)
                 pygame.draw.rect(self._panels, colour, bar, border_radius=self.unit)
             self._text(self._small, f"{mon.hp}/{mon.max_hp}", DIM, topright=(315, y + 4.4))
 

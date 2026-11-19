@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{# Reload while idle so a client asking for approval shows up; not while a form is on screen. #}
+{% if not pending %}<meta http-equiv="refresh" content="5">{% endif %}
+<title>DECT plays Pokémon</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0 auto; max-width: 64rem; padding: 1.5rem; background: #0e101a; color: #eeece2;
+         font: 15px/1.5 system-ui, sans-serif; }
+  h1 { font-size: 1.3rem; }
+  h2 { font-size: 1rem; margin: 2rem 0 .5rem; color: #7880a0; text-transform: uppercase; letter-spacing: .08em; }
+  section, .client { background: #1b1f30; border-radius: .5rem; padding: 1rem; }
+  .client { display: flex; flex-wrap: wrap; gap: .75rem 1.5rem; align-items: center; margin-bottom: .75rem; }
+  .code { font: bold 1.6rem ui-monospace, monospace; color: #f05830; letter-spacing: .1em; }
+  .muted { color: #7880a0; }
+  form { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: 0; }
+  select, button { font: inherit; padding: .35rem .7rem; border-radius: .35rem; border: 1px solid #303752;
+                   background: #303752; color: inherit; }
+  button.accept { background: #f05830; border-color: #f05830; font-weight: 600; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; white-space: nowrap; }
+  th, td { text-align: left; padding: .35rem .9rem .35rem 0; }
+  th { color: #7880a0; font-weight: 500; }
+  td.number, th.number { text-align: right; font-variant-numeric: tabular-nums; }
+  a { color: #6abdff; }
+</style>
+</head>
+<body>
+<h1>DECT plays Pokémon</h1>
+
+<h2>Clients waiting for approval</h2>
+{% for client in pending %}
+<div class="client">
+  <span class="code">{{ client.code }}</span>
+  <span>{{ client.name }}<br><span class="muted">asked {{ client.created_at }} UTC</span></span>
+  <form method="post" action="{{ url_for('accept', client_id=client.id) }}">
+    <label for="snapshot-{{ client.id }}">Continue from</label>
+    <select name="snapshot" id="snapshot-{{ client.id }}">
+      {% for snapshot in snapshots[:20] %}
+      <option value="{{ snapshot.id }}">{{ "Most recent: " if loop.first }}{{ snapshot.created_at }}, frame {{ snapshot.frame }}</option>
+      {% endfor %}
+      <option value="">Nothing (the client's own start)</option>
+    </select>
+    <button class="accept">Accept</button>
+  </form>
+  <form method="post" action="{{ url_for('reject', client_id=client.id) }}"><button>Reject</button></form>
+</div>
+{% else %}
+<section class="muted">None. A client shows a 4-digit code on its screen while it waits; it will appear here.</section>
+{% endfor %}
+
+<h2>Playing</h2>
+<section>
+{% if active %}
+  {{ active.name }} <span class="muted">· code {{ active.code }} · last heard from {{ active.last_seen_at }} UTC</span>
+{% else %}
+  <span class="muted">No client is accepted.</span>
+{% endif %}
+</section>
+
+<h2>Snapshots</h2>
+<section>
+<p class="muted">{{ totals.snapshots }} snapshots, {{ totals.presses }} button presses in total.
+{% if totals.snapshots > snapshots|length %}Showing the latest {{ snapshots|length }}.{% endif %}</p>
+{% if snapshots %}
+<div class="scroll">
+<table>
+  <tr><th>Received (UTC)</th><th class="number">Frame</th><th>Player</th><th class="number">Badges</th>
+      <th>Party</th><th class="number">Presses</th><th>Client</th><th></th></tr>
+  {% for snapshot in snapshots %}
+  <tr>
+    <td>{{ snapshot.created_at }}</td>
+    <td class="number">{{ snapshot.frame }}</td>
+    <td>{{ snapshot.metadata.player }}</td>
+    <td class="number">{{ snapshot.metadata.badges|select|list|length }}/8</td>
+    <td>{% for mon in snapshot.metadata.party %}{{ mon.nickname }} L{{ mon.level }}{{ ", " if not loop.last }}{% endfor %}</td>
+    <td class="number">{{ snapshot.presses }}</td>
+    <td>{{ snapshot.client_name }}</td>
+    <td><a href="{{ url_for('download_state', snapshot_id=snapshot.id) }}">state</a></td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
+</section>
+</body>
+</html>
