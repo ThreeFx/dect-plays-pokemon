@@ -77,6 +77,10 @@ keeps retrying and catches up), red when the server refused an upload, for
 example because another client was accepted. The reason is printed on the
 client's console. The game itself is not interrupted.
 
+The page shows each snapshot's party as the game's own icons, which the
+server reads from the ROM (`--rom`, by default `pokemon-firered.gba` in the
+directory it is started from). Without a ROM it lists names and levels.
+
 A client has to be accepted every time it starts. Only one client is accepted
 at a time; accepting another one stops the previous one from uploading. With
 an empty database the client starts from `--state` or from power-on.

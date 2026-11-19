@@ -89,6 +89,15 @@ def _party_mon(personality: int, ot_id: int, species: int, egg: bool = False) ->
     return header + b"".join(blocks) + bytes(20)
 
 
+def test_rom_file_gives_the_same_graphics_as_the_emulator(emu, rom):
+    from dpp.firered import Rom
+
+    file = Rom(rom)
+    assert file.game_code == emu.game_code
+    assert read_badge_icons(file) == read_badge_icons(emu)
+    assert read_mon_icon(file, 130) == read_mon_icon(emu, 130)
+
+
 def test_species_is_decrypted_from_the_right_block():
     for personality in range(1000, 1024):  # every block order once
         assert _species(_party_mon(personality, 0xDEADBEEF, 150)) == 150

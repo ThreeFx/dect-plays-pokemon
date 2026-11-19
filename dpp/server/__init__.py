@@ -16,11 +16,15 @@ import json
 import re
 import secrets
 import sqlite3
+import struct
+import zlib
 from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
 
 from flask import Flask, Response, abort, g, jsonify, redirect, render_template, request, url_for
+
+from ..firered import MON_ICON_SIZE, Rom, read_mon_icon
 
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 MAX_PENDING_CLIENTS = 20  # registration needs no password, so bound what strangers can queue up
@@ -67,9 +71,25 @@ def _hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def create_app(database: str | Path, password: str) -> Flask:
+def _png(rgba: bytes, size: int) -> bytes:
+    """Encode size x size RGBA pixels as a PNG file."""
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    rows = b"".join(b"\x00" + rgba[y * size * 4 : (y + 1) * size * 4] for y in range(size))  # 0: row not filtered
+    header = struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0)  # 8 bits per channel, RGBA
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(rows, 9)) + chunk(b"IEND", b"")
+
+
+def create_app(database: str | Path, password: str, rom: str | Path | None = None) -> Flask:
+    """rom is the game ROM the admin page takes Pokémon icons from; without it the page shows names."""
     if not password:
         raise ValueError("the server needs a password")
+    game = Rom(rom) if rom else None
+    if game:
+        read_mon_icon(game, 1)  # fails now, not on the first page view, if this is not a supported ROM
+    icons: dict[int, bytes] = {}  # PNG by species
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
 
@@ -154,7 +174,18 @@ def create_app(database: str | Path, password: str) -> Flask:
             active=g.db.execute("SELECT * FROM clients WHERE status = 'accepted'").fetchone(),
             snapshots=snapshots,
             totals=totals,
+            icons=game is not None,
         )
+
+    @app.get("/icons/<int:species>.png")
+    @admin
+    def icon(species: int):
+        if species not in icons:
+            rgba = read_mon_icon(game, species) if game else None
+            if rgba is None:
+                abort(404)
+            icons[species] = _png(rgba, MON_ICON_SIZE)
+        return Response(icons[species], mimetype="image/png", headers={"Cache-Control": "private, max-age=86400"})
 
     @app.post("/clients/<int:client_id>/accept")
     @admin

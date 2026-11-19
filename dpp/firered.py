@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING
 
-from .emulator import Emulator
+if TYPE_CHECKING:  # keeps this module usable where mGBA is not installed, i.e. on the server
+    from .emulator import Emulator
 
 BADGE_NAMES = ("Boulder", "Cascade", "Thunder", "Rainbow", "Soul", "Marsh", "Volcano", "Earth")
 
@@ -129,13 +132,44 @@ def read_stats(emu: Emulator) -> GameStats:
     return GameStats(badges, tuple(party))
 
 
-def _lz77_decompress(emu: Emulator, address: int) -> bytes:
+class Rom:
+    """A ROM file, readable at the addresses the GBA maps it to.
+
+    The graphics below can be read from this or from a running Emulator.
+    """
+
+    _BASE = 0x08000000
+
+    def __init__(self, path: str | Path):
+        self._data = Path(path).read_bytes()
+
+    @property
+    def game_code(self) -> str:
+        return "AGB-" + self._data[0xAC:0xB0].decode("ascii", "replace")
+
+    def read(self, address: int, length: int) -> bytes:
+        offset = address - self._BASE
+        if offset < 0 or offset + length > len(self._data):
+            raise ValueError(f"cannot read {length} bytes at {address:#010x}")
+        return self._data[offset : offset + length]
+
+    def read_u8(self, address: int) -> int:
+        return self.read(address, 1)[0]
+
+    def read_u16(self, address: int) -> int:
+        return int.from_bytes(self.read(address, 2), "little")
+
+    def read_u32(self, address: int) -> int:
+        return int.from_bytes(self.read(address, 4), "little")
+
+
+def _lz77_decompress(rom: Emulator | Rom, address: int) -> bytes:
     """Decompress data stored in the GBA BIOS's LZ77 format."""
-    header = emu.read(address, 4)
+    header = rom.read(address, 4)
     if header[0] != 0x10:
         raise ValueError(f"no LZ77 data at {address:#010x}")
     size = int.from_bytes(header[1:], "little")
-    data = emu.read(address + 4, size * 9 // 8 + 8)  # worst case: nothing compresses
+    data = rom.read(address + 4, size * 9 // 8 + 8)  # worst case: nothing compresses
     out = bytearray()
     pos = 0
     while len(out) < size:
@@ -156,18 +190,18 @@ def _lz77_decompress(emu: Emulator, address: int) -> bytes:
     return bytes(out[:size])
 
 
-def _rom_symbols(emu: Emulator) -> dict[str, int]:
-    revision = emu.read_u8(_ROM_REVISION)
-    if emu.game_code != "AGB-BPRE" or revision not in _ROM_SYMBOLS:
-        raise ValueError(f"unsupported ROM {emu.game_code} revision {revision}; need US FireRed (BPRE) 1.0 or 1.1")
+def _rom_symbols(rom: Emulator | Rom) -> dict[str, int]:
+    revision = rom.read_u8(_ROM_REVISION)
+    if rom.game_code != "AGB-BPRE" or revision not in _ROM_SYMBOLS:
+        raise ValueError(f"unsupported ROM {rom.game_code} revision {revision}; need US FireRed (BPRE) 1.0 or 1.1")
     return _ROM_SYMBOLS[revision]
 
 
-def _read_palette(emu: Emulator, address: int) -> list[bytes]:
+def _read_palette(rom: Emulator | Rom, address: int) -> list[bytes]:
     """A 16-colour palette as RGBA values; colour 0 is transparent."""
     palette = []
     for i in range(16):
-        colour = emu.read_u16(address + 2 * i)  # 15-bit BGR
+        colour = rom.read_u16(address + 2 * i)  # 15-bit BGR
         red, green, blue = (channel * 255 // 31 for channel in (colour & 31, colour >> 5 & 31, colour >> 10 & 31))
         palette.append(bytes((red, green, blue, 255 if i else 0)))
     return palette
@@ -184,23 +218,23 @@ def _tiles_to_rgba(tiles: bytes, palette: list[bytes], size: int, first_tile: in
     return bytes(pixels)
 
 
-def read_badge_icons(emu: Emulator) -> list[bytes]:
+def read_badge_icons(rom: Emulator | Rom) -> list[bytes]:
     """The eight badge icons as the game draws them, each BADGE_ICON_SIZE square RGBA pixels."""
-    symbols = _rom_symbols(emu)
-    tiles = _lz77_decompress(emu, symbols["sKantoTrainerCardBadges_Gfx"])  # a sheet 16 tiles wide, 2 x 2 tiles per badge
-    palette = _read_palette(emu, symbols["sKantoTrainerCardBadges_Pal"])
+    symbols = _rom_symbols(rom)
+    tiles = _lz77_decompress(rom, symbols["sKantoTrainerCardBadges_Gfx"])  # a sheet 16 tiles wide, 2 x 2 tiles per badge
+    palette = _read_palette(rom, symbols["sKantoTrainerCardBadges_Pal"])
     return [_tiles_to_rgba(tiles, palette, BADGE_ICON_SIZE, badge * 2, 16) for badge in range(8)]
 
 
-def read_mon_icon(emu: Emulator, species: int) -> bytes | None:
+def read_mon_icon(rom: Emulator | Rom, species: int) -> bytes | None:
     """A species' party-menu icon as MON_ICON_SIZE square RGBA pixels; None for an unknown species."""
     if not 0 < species < _SPECIES_COUNT:
         return None
-    symbols = _rom_symbols(emu)
+    symbols = _rom_symbols(rom)
     # Each icon is two animation frames of 4 x 4 tiles, stored uncompressed; take the first.
-    tiles = emu.read(emu.read_u32(symbols["gMonIconTable"] + 4 * species), 16 * 32)
-    palette_index = emu.read_u8(symbols["gMonIconPaletteIndices"] + species)
-    palette = _read_palette(emu, symbols["gMonIconPalettes"] + 32 * palette_index)
+    tiles = rom.read(rom.read_u32(symbols["gMonIconTable"] + 4 * species), 16 * 32)
+    palette_index = rom.read_u8(symbols["gMonIconPaletteIndices"] + species)
+    palette = _read_palette(rom, symbols["gMonIconPalettes"] + 32 * palette_index)
     return _tiles_to_rgba(tiles, palette, MON_ICON_SIZE, 0, 4)
 
 

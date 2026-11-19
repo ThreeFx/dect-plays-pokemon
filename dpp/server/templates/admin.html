@@ -25,6 +25,9 @@
   th, td { text-align: left; padding: .35rem .9rem .35rem 0; }
   th { color: #7880a0; font-weight: 500; }
   td.number, th.number { text-align: right; font-variant-numeric: tabular-nums; }
+  td.party { padding-top: 0; padding-bottom: 0; }
+  td.party img { image-rendering: pixelated; vertical-align: middle; }
+  td.party span + span::before { content: ", "; }
   a { color: #6abdff; }
 </style>
 </head>
@@ -76,7 +79,15 @@
     <td class="number">{{ snapshot.frame }}</td>
     <td>{{ snapshot.metadata.player }}</td>
     <td class="number">{{ snapshot.metadata.badges|select|list|length }}/8</td>
-    <td>{% for mon in snapshot.metadata.party %}{{ mon.nickname }} L{{ mon.level }}{{ ", " if not loop.last }}{% endfor %}</td>
+    <td class="party">
+      {%- for mon in snapshot.metadata.party -%}
+      {%- if icons and mon.species is integer -%}
+      <img src="{{ url_for('icon', species=mon.species) }}" width="32" height="32" alt="{{ mon.nickname }}" title="{{ mon.nickname }} L{{ mon.level }}">
+      {%- else -%}
+      <span>{{ mon.nickname }} L{{ mon.level }}</span>
+      {%- endif -%}
+      {%- endfor -%}
+    </td>
     <td class="number">{{ snapshot.presses }}</td>
     <td>{{ snapshot.client_name }}</td>
     <td><a href="{{ url_for('download_state', snapshot_id=snapshot.id) }}">state</a></td>

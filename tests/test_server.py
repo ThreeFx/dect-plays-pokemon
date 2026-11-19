@@ -96,6 +96,49 @@ def test_accepted_client_uploads_and_the_next_client_continues_from_it(web):
     assert web.put(f"/api/snapshots/{'3' * 32}", json=_snapshot(ID_2), headers=first).status_code == 403
 
 
+def _upload_party(web, party):
+    token, _ = _register(web)
+    _accept(web, 1)
+    snapshot = _snapshot()
+    snapshot["metadata"]["party"] = party
+    assert web.put(f"/api/snapshots/{ID_1}", json=snapshot, headers=token).status_code == 201
+
+
+def test_without_a_rom_the_party_is_listed_by_name(web):
+    _upload_party(web, [{"species": 25, "nickname": "PIKACHU", "level": 22}, {"species": 1, "nickname": "BULBA", "level": 5}])
+    page = web.get("/", headers=ADMIN).text
+    assert "<span>PIKACHU L22</span><span>BULBA L5</span>" in page and "<img" not in page
+    assert web.get("/icons/25.png", headers=ADMIN).status_code == 404
+
+
+def test_with_a_rom_the_party_is_shown_as_icons(tmp_path, rom):
+    import io
+
+    import pygame
+
+    from dpp.firered import Rom, read_mon_icon
+
+    web = create_app(tmp_path / "server.sqlite3", "secret", rom).test_client()
+    _upload_party(web, [{"species": 25, "nickname": "PIKACHU", "level": 22}, {"nickname": "OLD", "level": 3}])
+    page = web.get("/", headers=ADMIN).text
+    assert '<img src="/icons/25.png"' in page and 'title="PIKACHU L22"' in page
+    assert "<span>OLD L3</span>" in page, "snapshots from before species were recorded keep their text"
+
+    assert web.get("/icons/25.png").status_code == 401
+    response = web.get("/icons/25.png", headers=ADMIN)
+    assert response.status_code == 200 and response.mimetype == "image/png"
+    image = pygame.image.load(io.BytesIO(response.data), "icon.png")
+    assert pygame.image.tobytes(image, "RGBA") == read_mon_icon(Rom(rom), 25)
+    assert web.get("/icons/0.png", headers=ADMIN).status_code == 404
+    assert web.get("/icons/9999.png", headers=ADMIN).status_code == 404
+
+
+def test_server_refuses_a_file_that_is_not_the_game(tmp_path):
+    (tmp_path / "other.gba").write_bytes(bytes(1024 * 1024))
+    with pytest.raises(ValueError, match="unsupported ROM"):
+        create_app(tmp_path / "server.sqlite3", "secret", tmp_path / "other.gba")
+
+
 def test_rejected_client(web):
     token, _ = _register(web)
     web.post("/clients/1/reject", headers=ADMIN)
