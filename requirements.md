@@ -58,6 +58,6 @@ Auf dem Client ist:
 ## ToDos
 
 - [ ] E-Mail an das Eventphone team bzgl. gewünschter Nummer + Funktionalität.
-- [ ] E-Mail an das Assembly team bzgl. geeignetem Platz mit Leinwand.
+- [x] E-Mail an das Assembly team bzgl. geeignetem Platz mit Leinwand.
 - [ ] Programmierung des DECT/SIP mechanismuses
     - [ ] Wie testet man das?
