@@ -60,7 +60,14 @@ Auf dem Client ist:
 
 ## ToDos
 
-- [ ] E-Mail an das Eventphone team bzgl. gewünschter Nummer + Funktionalität.
+- [x] E-Mail an das Eventphone team bzgl. gewünschter Nummer + Funktionalität.
 - [x] E-Mail an das Assembly team bzgl. geeignetem Platz mit Leinwand.
 - [ ] Programmierung des DECT/SIP mechanismuses
     - [ ] Wie testet man das?
+- [ ] Was muss noch displayed werden?
+    - number of current callers, number total inputs, caller with most inputs in last <time>,
+- [ ] Dect start and end as events
+- [ ] dect caller info as db fields
+- [ ] caller hears pokemon music
+- [ ] end call at funny moments: party death, queue full
+  

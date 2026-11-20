@@ -92,6 +92,37 @@ The server listens on localhost unless told otherwise (`--host 0.0.0.0`). The
 password travels as HTTP Basic auth, so across a network put the server behind
 a reverse proxy that does TLS and give the client the `https://` URL.
 
+## Raspberry Pi image
+
+```sh
+./scripts/make_pi_image.sh --server https://dpp.example.org --ssh-key ~/.ssh/id_ed25519.pub
+```
+
+writes `dpp-client.img`: Raspberry Pi OS Lite (64-bit, for a Pi 4 or 5) with
+this repository, mGBA, the ROM and `data/start.state.z` (if it exists)
+installed. Flash it to an SD card; the Pi then boots straight into the client,
+full screen, and brings it back whenever it exits. Run the script with
+`--help` for all options.
+
+It needs Docker and ARM emulation (`qemu-user-static` on Debian or Ubuntu),
+but no root. The base image is downloaded once into `vendor/pi/`. Everything
+is compiled under emulation, so a build takes a while. At the end the script
+runs the client inside the finished image and saves what it drew as
+`vendor/pi/smoke-test.png`.
+
+On the Pi:
+
+- The client runs as the unprivileged user `dpp`, with the code in `/opt/dpp`
+  and the cartridge save in `/var/lib/dpp`. Its output is in the journal:
+  `journalctl -t dpp-client`.
+- Server, upload interval, phone number and client name are in `dpp.env` on
+  the card's boot partition (`/boot/firmware/dpp.env` on the Pi). It can be
+  edited on any computer the card is plugged into and is read at every start
+  of the client.
+- With `--ssh-key`, root can log in over SSH with that key and nothing else:
+  `ssh root@NAME.local`. Without it nobody can log in, over SSH or at the console: every password is locked.
+- The network is whatever Raspberry Pi OS does by default: DHCP on Ethernet.
+
 ## Code
 
 | File | What it does |
@@ -104,6 +135,7 @@ a reverse proxy that does TLS and give the client the `https://` URL.
 | `dpp/sync.py` | Client side of the server protocol: approval, input log, uploads |
 | `dpp/server/` | The server: client API, admin page, database |
 | `patches/` | Changes applied to the mGBA source before building |
+| `scripts/make_pi_image.sh`, `pi/` | Builds the Raspberry Pi SD card image |
 
 Sending input from Python:
 

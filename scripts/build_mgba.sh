@@ -27,6 +27,11 @@ fi
 export VIRTUAL_ENV=$venv
 export PATH=$venv/bin:$PATH
 
+# The generated binding code declares va_list as a plain pointer. GCC 14 and
+# later treat that mismatch as an error; it only affects a compile-time type
+# check, so keep it a warning. Both CMake and the bindings' setup.py read CFLAGS.
+export CFLAGS="${CFLAGS:-} -Wno-error=incompatible-pointer-types"
+
 # Only the emulator core and the bindings; no frontends, no optional libraries.
 cmake -S "$src" -B "$build" \
     -DCMAKE_BUILD_TYPE=Release \
